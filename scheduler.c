@@ -237,7 +237,9 @@ int main() {
 	printf("\n");
 
 	//Process / Queue movements
-
+	printf("=======================================================================\n"
+		   "PROCESS / QUEUE MOVEMENTS\n"
+		   "=======================================================================\n");
 	for (int i = 0; i < processTotal; i++) {
     Process *current = &processes[i];
 
