@@ -29,6 +29,9 @@ int assignQue(Process *processes, Process **MainQueue, int processTotal, int Que
 void rearrange(Process **queue, int *queueCnt);
 void initArray(Array *a, size_t initialSize);
 void insertArray(Array *a, int element);
+void checkContextSwitch(Process *currentProcess, Process **lastProcess, int *contextSwitchCount); 
+double countCPUUtilization(int time, int idle);
+double countThroughput(int time, int processCount);
 
 int main() {
 	const int totalQueue = 3;
@@ -121,6 +124,10 @@ int main() {
 	initArray(&checkPoint, 15);
 	insertArray(&checkPoint, time);
 	printf("|");
+	
+	//to help count context switch
+	Process *lastProcess = NULL;
+	int contextSwitchCount = 0;
 
 	//the hell's begin
 	while (!done) {
@@ -133,6 +140,8 @@ int main() {
 			timeConsumed = getMin(tq1, current->bt);
 			current->bt = getMax(current->bt - tq1, 0);
 			time += timeConsumed;
+
+			checkContextSwitch(current, &lastProcess, &contextSwitchCount);
 			
 			if (current->bt > 0) {
 				current->migrate = true;
@@ -162,6 +171,8 @@ int main() {
 			current->bt = getMax(current->bt - tq2, 0);
 			time += timeConsumed;
 			
+			checkContextSwitch(current, &lastProcess, &contextSwitchCount);
+
 			if (current->bt > 0) {
 				current->migrate = true;
 				current->movTimes[current->movTimesCnt] = time;
@@ -193,6 +204,9 @@ int main() {
 			current->onQue	= false;
 			current->terminatedTime = time;
 			finished++;
+
+			checkContextSwitch(current, &lastProcess, &contextSwitchCount);
+
 			rearrange(q2, &q2cnt);
 			insertArray(&checkPoint, time);
 			printf("%*s%s(Q2)%*s|", 3, "", current->pid, 3, "");
@@ -211,6 +225,8 @@ int main() {
 			}
 			insertArray(&checkPoint, time);
 			printf("%*sidle%*s|", 3, "", 3, ""); 
+
+			lastProcess = NULL; 
 		}
 	}
 
@@ -221,9 +237,7 @@ int main() {
 	printf("\n");
 
 	//Process / Queue movements
-	printf("=======================================================================\n"
-		   "PROCESS / QUEUE MOVEMENTS\n"
-		   "=======================================================================\n");
+
 	for (int i = 0; i < processTotal; i++) {
     Process *current = &processes[i];
 
@@ -242,6 +256,21 @@ int main() {
 	printf("\n");
 
 	//Queue Migration
+
+	// cpu utilization and throughput
+	double cpuUtilization = countCPUUtilization(time, idle);
+	double throughput = countThroughput(time, processTotal);
+	printf("=======================================================================\n"
+		   "CPU UTILIZATION AND THROUGHPUT\n"
+		   "=======================================================================\n");
+	printf("CPU Utilization	: %.2f%%\n", cpuUtilization);
+	printf("Throughput	: %.2f process/time unit\n", throughput);
+
+	// context switch
+	printf("\n=======================================================================\n"
+		   "CONTEXT SWITCH INFORMATION\n"
+		   "=======================================================================\n");
+	printf("Total Context Switch	: %d\n", contextSwitchCount);
 }
 
 //helper function (just make your own dont even bother to read mine)
@@ -289,3 +318,30 @@ void insertArray(Array *a, int element) {
   a->array[a->used++] = element;
 }
 // endarea
+
+// count context switch
+void checkContextSwitch(Process *currentProcess, Process **lastProcess, int *contextSwitchCount) {
+	// check if current Process with past Process is difference or no 
+	if (*lastProcess != NULL && *lastProcess != currentProcess) {
+		(*contextSwitchCount)++;
+	}
+	// update last process running
+	*lastProcess = currentProcess;
+}
+
+// count cpu utilization ((total time - idle time) / total time) * 100% 
+double countCPUUtilization(int time, int idle) {
+	if (time == 0) return 0.0;
+	double cpuUtilization = ((double) (time-idle) / time) * 100.0;
+	return cpuUtilization;
+}
+
+// count throughput (jumlah proses / total time)
+double countThroughput(int time, int processCount) {
+	if (time == 0) return 0.0;
+	double throughput = ((double) processCount / time);
+	return throughput;
+}
+
+
+
