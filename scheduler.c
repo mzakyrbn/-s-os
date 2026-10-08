@@ -26,8 +26,23 @@ typedef struct {
 	bool migrate; //sign if its gonna migrate
 	bool terminated; //sign if its terminated
 	int terminatedTime; //times it terminated
-	char stateTransitionHistory[512]; //store process state transition history
+	char stateTransitionHistory[2048]; //store process state transition history
 } Process; 
+typedef struct {
+	int time;
+	char pid[31];
+	int fromQ;
+	int toQ;
+	int remaining;
+} Migration;
+
+typedef struct {
+	int time;
+	char preemptedPid[31];
+	int queue;
+	int remaining;
+	char byPid[31];
+} Preemption;
 
 int getMax(int a, int b);
 int getMin(int a, int b);
@@ -39,6 +54,9 @@ void checkContextSwitch(Process *currentProcess, Process **lastProcess, int *con
 double countCPUUtilization(int time, int idle);
 double countThroughput(int time, int processCount);
 void addStateTransition(Process *process, char *state, int time);
+void logMigration(Migration *log, int *cnt, int time, Process *p, int fromQ, int toQ);
+int findPreemptor(Process *processes, int processTotal, int time, int end);
+void logPreemption(Preemption *log, int *cnt, int time, Process *p, int queue, const char *byPid);
 
 int main() {
 	const int totalQueue = 3;
@@ -69,7 +87,7 @@ int main() {
 		inputReport = scanf("%d", &tq2);
 
 		if (inputReport == 0) printf("Input salah. Harap masukkan input dengan benar.\n");
-		else if (tq1 <= 0) printf("time quantum harus lebih besar dari 0\n");
+		else if (tq2 <= 0) printf("time quantum harus lebih besar dari 0\n");
 		
 	} while (inputReport == 0 || tq2 <= 0);
 
@@ -78,7 +96,7 @@ int main() {
 	for (int i = 0; i < processTotal; i++) {
 		int at;
 		int bt;
-		printf("P%d - masukkan AT BT queue: ", i);
+		printf("P%d - masukkan AT BT queue: ", i + 1);
 		do {
 			inputReport = scanf("%d %d", &at, &bt);
 
@@ -142,6 +160,13 @@ int main() {
 	Process *lastProcess = NULL;
 	int contextSwitchCount = 0;
 
+	// maksimal 2 migrasi per proses (Q0->Q1 dan Q1->Q2)
+	Migration *migrations = malloc(processTotal * 2 * sizeof(Migration));
+	int migrationCnt = 0;
+
+	Preemption *preemptions = malloc(processTotal * 3 * sizeof(Preemption));
+	int preemptionCnt = 0;
+
 	//the hell's begin
 	while (!done) {
 		q0cnt = assignQue(processes, q0, processTotal, q0cnt, time);
@@ -166,6 +191,7 @@ int main() {
 			
 			if (current->bt > 0) {
 				current->migrate = true;
+				logMigration(migrations, &migrationCnt, time, current, 0, 1);
 				current->movTimes[current->movTimesCnt] = time;
 				current->movTimesCnt++;
 				q1[q1cnt] = q0[first];
@@ -199,6 +225,32 @@ int main() {
 
 			current->migrate = false;
 			timeConsumed = getMin(tq2, current->bt);
+
+			// bagian daffa (untuk preemption)
+			// cek apakah ada proses baru yang datang saat proses ini berjalan
+			int pre = findPreemptor(processes, processTotal, time, time + timeConsumed);
+			if (pre != -1) {
+				timeConsumed = processes[pre].at - time;
+				current->bt -= timeConsumed;
+				time += timeConsumed;
+
+				checkContextSwitch(current, &lastProcess, &contextSwitchCount);
+				logPreemption(preemptions, &preemptionCnt, time, current, 1, processes[pre].pid);
+				addStateTransition(current, "PREEMPTED", time);
+				addStateTransition(current, "READY Q1", time);
+
+				printf("%*s%s(Q1)%*s|", 3, "", current->pid, 3, "");
+				insertArray(&checkPoint, time);
+
+				// kembali ke belakang Q1
+				rearrange(q1, &q1cnt);
+				q1[q1cnt] = current;
+				q1cnt++;
+
+				q0cnt = assignQue(processes, q0, processTotal, q0cnt, time);
+				break; // Q0 punya proses baru -> jalankan Q0 dulu
+			}
+
 			current->bt = getMax(current->bt - tq2, 0);
 			time += timeConsumed;
 			
@@ -206,6 +258,7 @@ int main() {
 
 			if (current->bt > 0) {
 				current->migrate = true;
+				logMigration(migrations, &migrationCnt, time, current, 1, 2);
 				current->movTimes[current->movTimesCnt] = time;
 				current->movTimesCnt++;
 				q2[q2cnt] = q1[first];
@@ -243,6 +296,28 @@ int main() {
 
 			current->migrate = false;
 			timeConsumed = current->bt;
+
+			// bagian daffa (preemption)
+			// cek apakah ada proses baru yang datang saat proses ini berjalan
+			int pre = findPreemptor(processes, processTotal, time, time + timeConsumed);
+			if (pre != -1) {
+				timeConsumed = processes[pre].at - time;
+				current->bt -= timeConsumed;
+				time += timeConsumed;
+
+				checkContextSwitch(current, &lastProcess, &contextSwitchCount);
+				logPreemption(preemptions, &preemptionCnt, time, current, 2, processes[pre].pid);
+				addStateTransition(current, "PREEMPTED", time);
+				addStateTransition(current, "READY Q2", time);
+
+				printf("%*s%s(Q2)%*s|", 3, "", current->pid, 3, "");
+				insertArray(&checkPoint, time);
+
+				// proses tetap di depan Q2 (FCFS), tidak di-rearrange
+				q0cnt = assignQue(processes, q0, processTotal, q0cnt, time);
+				break;
+			}
+
 			time += timeConsumed;
 			current->terminated = true;
 			current->onQue	= false;
@@ -303,7 +378,89 @@ int main() {
 	}
 	printf("\n");
 
-	//Queue Migration
+	// Queue Migrations
+	printf("=======================================================================\n"
+		   "QUEUE MIGRATIONS\n"
+		   "=======================================================================\n");
+	if (migrationCnt == 0) {
+		printf("Tidak ada perpindahan queue.\n");
+	}
+	for (int i = 0; i < migrationCnt; i++) {
+		printf("t=%d : %s Q%d -> Q%d (quantum Q%d habis; sisa BT=%d)\n",
+			migrations[i].time, migrations[i].pid,
+			migrations[i].fromQ, migrations[i].toQ,
+			migrations[i].fromQ, migrations[i].remaining);
+	}
+	printf("Total Queue Migration : %d\n", migrationCnt);
+
+	// Higher-Queue Preemptions
+	printf("=======================================================================\n"
+		   "HIGHER-QUEUE PREEMPTIONS\n"
+		   "=======================================================================\n");
+	if (preemptionCnt == 0) {
+		printf("Tidak ada preemption antarqueue.\n");
+	}
+	for (int i = 0; i < preemptionCnt; i++) {
+		printf("t=%d : %s(Q%d) PREEMPTED (sisa BT=%d) -> %s(Q0)\n",
+			preemptions[i].time, preemptions[i].preemptedPid,
+			preemptions[i].queue, preemptions[i].remaining,
+			preemptions[i].byPid);
+	}
+	printf("Total Preemption Antarqueue : %d\n", preemptionCnt);
+
+	// Scheduling Table
+	double total_wt = 0;
+	double total_tat = 0;
+	double total_rt = 0;
+
+	printf("=======================================================================\n"
+		"SCHEDULING TABLE\n"
+		"=======================================================================\n");
+
+	printf("%-10s %-7s %-7s %-7s %-8s %-8s %-7s %s\n",
+		"PID", "AT", "BT", "CT", "TAT", "WT", "RT", "Final Q");
+
+	printf("-----------------------------------------------------------------------\n");
+
+	for (int i = 0; i < processTotal; i++) {
+		Process *current = &processes[i];
+
+		int ct = current->terminatedTime;
+		int tat = ct - current->at;
+		int wt = tat - current->original_bt;
+		int rt = current->first_start_time - current->at;
+
+		current->wt = wt;
+
+		total_wt += wt;
+		total_tat += tat;
+		total_rt += rt;
+
+		printf("%-10s %-7d %-7d %-7d %-8d %-8d %-7d Q%d\n",
+			current->pid,
+			current->at,
+			current->original_bt,
+			ct,
+			tat,
+			wt,
+			rt,
+			current->final_queue);
+	}
+
+	printf("=======================================================================\n\n");
+
+	double avg_wt = total_wt / processTotal;
+	double avg_tat = total_tat / processTotal;
+	double avg_rt = total_rt / processTotal;
+
+	printf("=======================================================================\n"
+		"SCHEDULING PERFORMANCE\n"
+		"=======================================================================\n");
+
+	printf("Average Waiting Time    : %.2f\n", avg_wt);
+	printf("Average Turnaround Time : %.2f\n", avg_tat);
+	printf("Average Response Time   : %.2f\n", avg_rt);
+
 
 	// Scheduling Table
 	double total_wt = 0;
@@ -462,5 +619,36 @@ void addStateTransition(Process *process, char *state, int time) {
     strcat(process->stateTransitionHistory, temp);
 }
 
+// catat perpindahan queue (dipanggil saat quantum habis dan proses belum selesai)
+void logMigration(Migration *log, int *cnt, int time, Process *p, int fromQ, int toQ) {
+	log[*cnt].time = time;
+	strcpy(log[*cnt].pid, p->pid);
+	log[*cnt].fromQ = fromQ;
+	log[*cnt].toQ = toQ;
+	log[*cnt].remaining = p->bt;
+	(*cnt)++;
+}
 
+// cari proses baru (belum di queue, belum selesai) yang AT-nya time < AT < end
+// return index proses dengan AT paling awal (tie -> index terkecil), atau -1
+int findPreemptor(Process *processes, int processTotal, int time, int end) {
+	int idx = -1;
+	for (int i = 0; i < processTotal; i++) {
+		if (!processes[i].onQue && !processes[i].terminated &&
+			processes[i].at > time && processes[i].at < end) {
+			if (idx == -1 || processes[i].at < processes[idx].at) idx = i;
+		}
+	}
+	return idx;
+}
+
+// catat preemption antarqueue
+void logPreemption(Preemption *log, int *cnt, int time, Process *p, int queue, const char *byPid) {
+	log[*cnt].time = time;
+	strcpy(log[*cnt].preemptedPid, p->pid);
+	log[*cnt].queue = queue;
+	log[*cnt].remaining = p->bt;
+	strcpy(log[*cnt].byPid, byPid);
+	(*cnt)++;
+}
 
