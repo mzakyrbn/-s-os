@@ -21,6 +21,7 @@ typedef struct {
 	bool migrate; //sign if its gonna migrate
 	bool terminated; //sign if its terminated
 	int terminatedTime; //times it terminated
+	char stateTransitionHistory[512]; //store process state transition history
 } Process; 
 
 int getMax(int a, int b);
@@ -32,6 +33,7 @@ void insertArray(Array *a, int element);
 void checkContextSwitch(Process *currentProcess, Process **lastProcess, int *contextSwitchCount); 
 double countCPUUtilization(int time, int idle);
 double countThroughput(int time, int processCount);
+void addStateTransition(Process *process, char *state, int time);
 
 int main() {
 	const int totalQueue = 3;
@@ -90,6 +92,9 @@ int main() {
 		processes[i].migrate = false;
 		processes[i].terminated = false;
 		processes[i].terminatedTime = 0;
+
+		//initialize state during arrival time
+		sprintf(processes[i].stateTransitionHistory, "%s : NEW -> READY Q0 (t=%d)", processes[i].pid, at);
 	}
 
 	//process input and queue configuration
@@ -137,6 +142,7 @@ int main() {
 
 		while (q0cnt > 0) {
 			Process *current = q0[first];
+			addStateTransition(current, "RUNNING Q0", time); //state use Q0
 			timeConsumed = getMin(tq1, current->bt);
 			current->bt = getMax(current->bt - tq1, 0);
 			time += timeConsumed;
@@ -149,12 +155,14 @@ int main() {
 				current->movTimesCnt++;
 				q1[q1cnt] = q0[first];
 				q1cnt++;
+				addStateTransition(current, "READY Q1", time);//if process not finish
 			}
 			else {
 				current->terminated = true;
 				current->onQue = false;
 				current->terminatedTime = time;
 				finished++;
+				addStateTransition(current, "TERMINATED", time);//if process finish
 			}
 			printf("%*s%s(Q0)%*s|", 3, "", current->pid, 3, "");
 			insertArray(&checkPoint, time);
@@ -166,6 +174,7 @@ int main() {
 		while (q1cnt > 0) {
 			if (q0cnt > 0) break;
 			Process *current = q1[first];
+			addStateTransition(current, "RUNNING Q1", time); //process use Q1
 			current->migrate = false;
 			timeConsumed = getMin(tq2, current->bt);
 			current->bt = getMax(current->bt - tq2, 0);
@@ -179,12 +188,16 @@ int main() {
 				current->movTimesCnt++;
 				q2[q2cnt] = q1[first];
 				q2cnt++;
+
+				addStateTransition(current, "READY Q2", time); //if process not finish
 			}
 			else {
 				current->terminated = true;
 				current->onQue = false;
 				current->terminatedTime = time;
 				finished++;
+
+				addStateTransition(current, "TERMINATED", time);//if process finish
 			}
 			printf("%*s%s(Q1)%*s|", 3, "", current->pid, 3, "");
 			rearrange(q1, &q1cnt);
@@ -197,6 +210,7 @@ int main() {
 		while (q2cnt > 0) {
 			if (q0cnt > 0 || q1cnt > 0) break;
 			Process *current = q2[first];
+			addStateTransition(current, "RUNNING Q2", time); //state use Q2
 			current->migrate = false;
 			timeConsumed = current->bt;
 			time += timeConsumed;
@@ -205,6 +219,7 @@ int main() {
 			current->terminatedTime = time;
 			finished++;
 
+			addStateTransition(current, "TERMINATED", time);//if process finish
 			checkContextSwitch(current, &lastProcess, &contextSwitchCount);
 
 			rearrange(q2, &q2cnt);
@@ -273,6 +288,15 @@ int main() {
 		   "CONTEXT SWITCH INFORMATION\n"
 		   "=======================================================================\n");
 	printf("Total Context Switch	: %d\n", contextSwitchCount);
+	
+	// process state transitions
+    printf("=======================================================================\n"
+           "PROCESS STATE TRANSITIONS\n"
+           "=======================================================================\n");
+    for (int i = 0; i < processTotal; i++) {
+        printf("%s\n", processes[i].stateTransitionHistory);
+    }
+    printf("=======================================================================\n");
 }
 
 //helper function (just make your own dont even bother to read mine)
@@ -343,6 +367,13 @@ double countThroughput(int time, int processCount) {
 	if (time == 0) return 0.0;
 	double throughput = ((double) processCount / time);
 	return throughput;
+}
+
+// add process state history to each process 
+void addStateTransition(Process *process, char *state, int time) {
+    char temp[64];
+    sprintf(temp, " -> %s (t=%d)", state, time);
+    strcat(process->stateTransitionHistory, temp);
 }
 
 
