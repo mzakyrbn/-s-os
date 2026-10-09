@@ -167,7 +167,7 @@ int main() {
 	Preemption *preemptions = malloc(processTotal * 3 * sizeof(Preemption));
 	int preemptionCnt = 0;
 
-	//the hell's begin
+	//begin "executing" the proccess
 	while (!done) {
 		q0cnt = assignQue(processes, q0, processTotal, q0cnt, time);
 
@@ -463,9 +463,9 @@ int main() {
 
 
 	// Scheduling Table
-	double total_wt = 0;
-	double total_tat = 0;
-	double total_rt = 0;
+	total_wt = 0;
+	total_tat = 0;
+	total_rt = 0;
 
 	printf("=======================================================================\n"
 		"SCHEDULING TABLE\n"
@@ -503,9 +503,9 @@ int main() {
 
 	printf("=======================================================================\n\n");
 
-	double avg_wt = total_wt / processTotal;
-	double avg_tat = total_tat / processTotal;
-	double avg_rt = total_rt / processTotal;
+	avg_wt = total_wt / processTotal;
+	avg_tat = total_tat / processTotal;
+	avg_rt = total_rt / processTotal;
 
 	printf("=======================================================================\n"
 		"SCHEDULING PERFORMANCE\n"
